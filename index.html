@@ -146,13 +146,14 @@ function push(){
         headers:{...HDR,Prefer:'resolution=merge-duplicates,return=minimal'},
         body:JSON.stringify({id:ROW_ID,data:S,updated_at:new Date().toISOString()})});
       if(!r.ok)throw new Error(r.status);
-      status('Synced','ok');
-    }catch(e){status('Offline — saved on this device','err')}
+      pushTimer=null;status('Synced','ok');
+    }catch(e){pushTimer=null;status('Offline — saved on this device','err')}
   },600);
 }
 const save=()=>{try{localStorage.setItem('marcello-schedule',JSON.stringify(S))}catch(e){}push()};
 
 async function pull(){
+  if(pushTimer)return;
   try{
     const r=await fetch(SB_URL+'?id=eq.'+ROW_ID+'&select=data',{headers:HDR});
     if(!r.ok)throw new Error(r.status);
@@ -262,21 +263,33 @@ $('addRem').onclick=()=>{
   try{if('Notification' in window&&Notification.permission==='default')Notification.requestPermission()}catch(e){}
 };
 function due(){const n=new Date(),now=key(n)+n.toTimeString().slice(0,5);return S.rems.filter(r=>!r.done&&(r.date+r.time)<=now)}
-let last=0;
+let last=0,sig='',flash=null;const TITLE=document.title;
 function check(){
   const d=due(),box=$('alert');
-  if(!d.length){box.classList.remove('on');return}
-  const list=$('alist');list.innerHTML='';
-  d.forEach(r=>{
-    const e=document.createElement('div');e.className='al';
-    e.innerHTML='<span><b>'+esc(r.text)+'</b><br><small>Set for '+r.time+'. I shall keep reminding you until it is done, Sir.</small></span><button class="tick" title="Done">✓</button>';
-    e.querySelector('.tick').onclick=()=>{r.done=true;save();renderRems();check()};
-    list.appendChild(e);
-  });
+  if(!d.length){
+    box.classList.remove('on');sig='';
+    if(flash){clearInterval(flash);flash=null;document.title=TITLE}
+    return;
+  }
+  // rebuild only when the set of due reminders changes, so the Done button stays clickable
+  const s2=d.map(r=>r.id).join(',');
+  if(s2!==sig){
+    sig=s2;
+    const list=$('alist');list.innerHTML='';
+    d.forEach(r=>{
+      const e=document.createElement('div');e.className='al';
+      e.innerHTML='<span><b>'+esc(r.text)+'</b><br><small>Set for '+r.date+' '+r.time+'. I shall keep reminding you until it is done, Sir.</small></span><button class="tick" title="Done">✓</button>';
+      e.querySelector('.tick').onclick=()=>{r.done=true;save();renderRems();check()};
+      list.appendChild(e);
+    });
+  }
   box.classList.add('on');
+  if(!flash){let on=false;flash=setInterval(()=>{on=!on;document.title=on?'🔔 REMINDER: '+d[0].text:TITLE},900)}
   if(Date.now()-last>4000){last=Date.now();beep();
-    try{if('Notification' in window&&Notification.permission==='granted')new Notification('Private Secretary',{body:d[0].text,tag:'secretary'})}catch(e){}}
+    try{navigator.vibrate&&navigator.vibrate([300,150,300])}catch(e){}
+    try{if('Notification' in window&&Notification.permission==='granted')new Notification('Private Secretary',{body:d[0].text,tag:'secretary',renotify:true,requireInteraction:true})}catch(e){}}
 }
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('alert').classList.contains('on'))e.preventDefault()});
 setInterval(check,1000);
 document.addEventListener('click',()=>{try{ac=ac||new (window.AudioContext||window.webkitAudioContext)()}catch(e){}},{once:true});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)pull()});
